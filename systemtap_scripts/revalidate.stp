@@ -1,0 +1,16 @@
+global counter
+function d_name:string(dentry:long)
+{
+        len = @cast(dentry, "dentry")->d_name->len;
+        return kernel_string_n(@cast(dentry, "dentry")->d_name->name, len);
+}
+
+probe kernel.function("do_revalidate") {
+    if (isinstr(d_name($dentry), "fadvice_test"))
+        counter ++
+}
+
+probe end {
+    printf("Matches %d\n", counter)
+}
+

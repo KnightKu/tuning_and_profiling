@@ -1,0 +1,128 @@
+global entry,arrays
+/*
+function d_parent_name:string(dentry:long)
+{
+        len = @cast(dentry, "dentry")->d_parent->d_name->len;
+        return kernel_string_n(@cast(dentry, "dentry")->d_parent->d_name->name, len);
+}
+
+
+function nd_name:string(nd:long)
+{
+        len = @cast(nd, "nameidata")->path.dentry->d_parent->d_name->len;
+        printf("len:%d\n", len)
+        return kernel_string_n(@cast(nd, "nameidata")->path.dentry->d_parent->d_name->name, len);
+}
+
+*/
+function nd_name:string(nd:long)
+{
+        dentry = @choose_defined(@cast(nd,"nameidata")->path->dentry,
+                                 @cast(nd,"nameidata")->dentry)
+        vfsmnt = @choose_defined(@cast(nd,"nameidata")->path->mnt,
+                                 @cast(nd,"nameidata")->mnt)
+
+        return sprintf("%s/", task_dentry_path(task_current(), dentry, vfsmnt))
+}
+
+probe begin
+{
+    printf("monitor begin\n");
+}
+
+probe kernel.function("user_path_at").call
+{
+
+    if (isinstr($name$, "/mnt/lustre/test_dir1/#test-dir"))
+    {
+        entry["user_path_at", tid()] = gettimeofday_us()
+    }
+}
+
+probe kernel.function("user_path_at").return
+{
+    if (isinstr($name$, "/mnt/lustre/test_dir1/#test-dir"))
+    {
+        if (!(["user_path_at", tid()] in entry)) next
+        arrays["user_path_at"] <<< gettimeofday_us() - entry["user_path_at", tid()]
+        delete entry["user_path_at", tid()]
+    }
+}
+
+/*
+probe kernel.function("vfs_getattr").call
+{
+    if (isinstr(d_parent_name($dentry), "test_dir1"))
+    {
+        entry["vfs_getattr", tid()] = gettimeofday_us()
+    }
+}
+
+probe kernel.function("vfs_getattr").return
+{
+    printf("%s\n", d_parent_name($dentry))
+    if (isinstr(d_parent_name($dentry), "test_dir1"))
+    {
+        if (!(["vfs_getattr",tid()] in entry)) next
+        arrays["vfs_getattr"] <<< gettimeofday_us() - entry["vfs_getattr", tid()]
+        delete entry["vfs_getattr", tid()]
+    }
+}
+*/
+probe kernel.function("do_lookup").call
+{
+    if (isinstr(nd_name($nd), "/mnt/lustre/test_dir1/#test-dir"))
+    {
+        entry["do_lookup", tid()] = gettimeofday_us()
+    }
+}
+
+probe kernel.function("do_lookup").return
+{
+    if (isinstr(nd_name($nd), "/mnt/lustre/test_dir1/#test-dir"))
+    {
+        if (!(["do_lookup",tid()] in entry)) next
+        arrays["do_lookup"] <<< gettimeofday_us() - entry["do_lookup", tid()]
+        delete entry["do_lookup", tid()]
+    }
+}
+
+probe module("lustre").function("ll_getattr").call
+{
+    entry["ll_getattr", tid()] = gettimeofday_us()
+}
+
+probe module("lustre").function("ll_getattr").return
+{
+    if (!(["ll_getattr",tid()] in entry)) next
+    arrays["ll_getattr"] <<< gettimeofday_us() - entry["ll_getattr", tid()]
+    delete entry["ll_getattr", tid()]
+}
+
+
+probe module("lustre").function("ll_lookup_nd").call
+{
+    if(isinstr(inode_name($parent), "test_dir1/#test-dir"))
+    {
+        entry["ll_lookup_nd", tid()] = gettimeofday_us()
+    }
+}
+
+probe module("lustre").function("ll_lookup_nd").return
+{
+    if(isinstr(inode_name($parent), "test_dir1/#test-dir"))
+    {
+        if (!(["ll_lookup_nd", tid()] in entry)) next
+        arrays["ll_lookup_nd"] <<< gettimeofday_us() - entry["ll_lookup_nd", tid()]
+        delete entry["ll_lookup_nd", tid()]
+    }
+}
+
+probe end
+{
+    printf("%-20s %-10s %-10s %-10s\n", "FUNC", "COUNT", "TOTAL", "AVG")
+    foreach ([func] in arrays) {
+        printf("%-20s %-10d %-10d %-10d\n", func, @count(arrays[func]), @sum(arrays[func]), @avg(arrays[func]))
+    }
+    printf("monitor end\n");
+}
